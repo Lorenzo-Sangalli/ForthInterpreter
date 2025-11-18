@@ -64,6 +64,7 @@ typedef struct fcontext{
 /*================================= FORWARD DECLARATIONS ========================================*/
 void listPop(fobj *l);
 void release(fobj *o);
+fobj *compile(char* prg);
 /*================================= ALLOCATION WRAPPERS =========================================*/
 
 void *smalloc(size_t size){
@@ -220,10 +221,12 @@ void echoObject(fobj *o){
 void listPush(fobj *l, fobj * ele){
 //	printf("LIST PUSH: ");
 //	echoObject(ele);
+//	printf("\n");
 	size_t list_size= l->list.len;
 	l->list.ele = srealloc(l->list.ele, sizeof(fobj*)*(list_size+1));
 	l->list.ele[list_size]=ele;
 	l->list.len++;
+//	echoObject(l);
 //	printf("\n SUCCESS \n");
 	
 }
@@ -239,7 +242,7 @@ void listPop(fobj *l){
 
 /*================================= MAKE PROGRAM INTO A LIST =================================*/
 void parseSpaces(fparser *parser){
-	while (parser->p[0]!=0 && isspace(parser->p[0]))
+	while (parser->p && isspace(parser->p[0]))
 	{
 		parser->p++;
 	}
@@ -272,11 +275,12 @@ fobj *parseNumber(fparser *parser){
 
 int isSymbolChar(char c){
 	const char symchars[] = "+-*/%";
-	return (isalpha(c) || strchr(symchars,c));
+	return (isalpha(c) || (strchr(symchars,c) && c!=0));
 }
 
 fobj *parseSymbol(fparser *parser){
 	char *start = parser->p;
+
 	while (isSymbolChar(parser->p[0])){
 		parser->p++;
 	}
@@ -285,7 +289,7 @@ fobj *parseSymbol(fparser *parser){
 	
 }
 
-fobj* parseString(fparser *parser){
+fobj *parseString(fparser *parser){
 	parser->p++;
 	char *start = parser->p;
 	while (parser->p[0]!='"')
@@ -297,8 +301,36 @@ fobj* parseString(fparser *parser){
 	return newStringObject(start,strlen);
 }
 
+fobj *parseList(fparser *parser){
+	parser->p++;
+	char *start = parser->p;
+	int countBrackets = 1;
+	while (countBrackets>0 && parser->p[0]!=0)
+	{	
+		if(parser->p[0]==']'){
+			countBrackets--;
+		}
+		if(parser->p[0]=='['){
+			countBrackets++;
+		}
+		parser->p++;
+	}
+	if (parser->p[0]==0){
+		return NULL;
+	}
+	
+	size_t prglen = (parser->p) - start; 
+	char *subprg = smalloc(prglen);
+	memcpy(subprg,start,prglen);
+	subprg[prglen-1] = 0;
+	fobj* list = compile(subprg);
+	free(subprg);
+	parser->p++;
+	return list;
+}
+
 fobj *compile(char* prg){
-//	fprintf(stderr,"Compile started\n");
+//	fprintf(stdout,"Compile started: %s\n",prg);
 	fparser parser;
 	parser.prg = prg;
 	parser.p = prg;
@@ -310,7 +342,8 @@ fobj *compile(char* prg){
 		fobj *o;
 		char *token_start = parser.p;
 		parseSpaces(&parser);
-		if(parser.p[0]==0){ //End of program, reached null term
+
+		if(parser.p[0]==0){ //End of program, reached null term.
 			break; 
 		}
 		if(isdigit(parser.p[0]) || (parser.p[0]=='-' && isdigit(parser.p[1]))){
@@ -321,6 +354,15 @@ fobj *compile(char* prg){
 		}
 		else if(isSymbolChar(parser.p[0])){
 			o = parseSymbol(&parser);
+//			printf("SYMBOL PARSING TERMINATED\n");
+//			echoObject(o);
+//			printf("\n continue to: %s", parser.p);
+		}
+		else if(parser.p[0]=='['){
+			o = parseList(&parser);
+//			printf("LIST PARSING TERMINATED\n");
+			// echoObject(o);
+			// printf("\n continue to: %s", parser.p);
 		}
 		else{
 			o = NULL;
@@ -333,8 +375,11 @@ fobj *compile(char* prg){
 		}
 		else {
 			listPush(parsed,o);
+			retain(o);
 		}
 	}
+//	printf("\nCOMPILE TERMIANATED\n");
+//	echoObject(parsed);
 	return parsed;
 }
 
@@ -435,6 +480,14 @@ void *newContext(){
 	return ctx; 
 }
 
+void mergeContext(fcontext* ctx, fcontext *subctxt){
+	for (size_t i = 0; i < subctxt->stack->list.len; i++)
+	{
+		listPush(ctx->stack, subctxt->stack->list.ele[i]);
+		retain(subctxt->stack->list.ele[i]);
+	}	
+}
+
 /*try to match the 'word' symbol with the proper function.
  *return 0 if a proper function was found, return 1 otherwise*/
 int callSymbol(fcontext *ctx, fobj *word){
@@ -468,6 +521,12 @@ void exec(fcontext *ctx, fobj *prg){
 		case SYMBOL:
 			callSymbol(ctx,word);
 			break;
+		case LIST:
+			fcontext *subctx = newContext();
+			exec(subctx,word);
+			mergeContext(ctx,subctx);
+			release(subctx->stack);
+			break;
 		default:
 			listPush(ctx->stack, word);
 			retain(word);
@@ -497,16 +556,17 @@ int main(int argc, char **argv){
 	char *prgtext = smalloc(file_size+1);
 	fseek(fp,0,SEEK_SET);
 	fread(prgtext,file_size,1,fp);
-	prgtext[file_size] = '\0';
-	printf("text: %s",prgtext);
+	prgtext[file_size] = 0;
+	printf("text: %s\n",prgtext);
 	fclose(fp);
 
 	
 	fobj *prg = compile(prgtext);
-	if(prg!=NULL){
-		echoObject(prg);
-		printf("\n");
-	}
+	// if(prg!=NULL){
+	// 	printf("\nPROGRAM COMPILATION SUCCESSFUL:\n");
+	// 	echoObject(prg);
+	// 	printf("\n");
+	// }
 
 	fcontext *ctx = newContext();
 	exec(ctx, prg);
