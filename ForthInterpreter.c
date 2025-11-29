@@ -62,6 +62,13 @@ typedef struct fcontext{
 	struct FunctionTable functions;
 }fcontext;
 
+fobj *ctxGetFromTop(fcontext *ctx, int index){
+	size_t stacklen = ctx->stack->list.len;
+	assert(stacklen-1-index>=0);
+	return ctx->stack->list.ele[stacklen-1-index];
+
+}
+
 /*================================= FORWARD DECLARATIONS ========================================*/
 void listPop(fobj *l);
 void release(fobj *o);
@@ -69,6 +76,7 @@ fobj *compile(char* prg);
 void exec(fcontext *ctx, fobj *prg);
 void *newContext();
 void retain(fobj *o);
+fobj * contextPop(fcontext *ctx);
 /*================================= ALLOCATION WRAPPERS =========================================*/
 
 /*Just a (more) safe malloc that checks for out of memory exceptions.*/
@@ -428,6 +436,17 @@ fobj *compile(char* prg){
 	return parsed;
 }
 
+void lazyEval(fcontext *ctx){
+
+	fobj *o = ctxGetFromTop(ctx,0);
+	while (o->type==LIST)
+	{	
+		listPop(ctx->stack);
+		exec(ctx,o);
+		o=ctxGetFromTop(ctx,0);
+	}	
+}
+
 /*================================= SYMBOL ASSOCIATED FUNCTIONS =================================*/
 
 
@@ -439,34 +458,33 @@ void basicMathFunction(fcontext *ctx, fobj *name){
 	size_t stacklen = ctx->stack->list.len;
 	assert(stacklen>=2);
 
-	fobj *n1 = ctx->stack->list.ele[stacklen-1];
-	fobj *n2 = ctx->stack->list.ele[stacklen-2];
+	
+	lazyEval(ctx);
+	fobj *n1 = ctxGetFromTop(ctx,0);
 	listPop(ctx->stack);
+	
+	lazyEval(ctx);
+	fobj *n2 = ctxGetFromTop(ctx,0);
 	listPop(ctx->stack);
+	
+	
 	fobj *newO;
-	if(n1->type!=INT && n2->type!=INT){
-		fprintf(stderr, "Error: unknown operand type\n");
+	if(n1->type!=INT || n2->type!=INT){
+		printf("Error: unknown operand type\n");
+		return;
 	}
 
 	assert(name->str.len==1);
 	int res;
+	int a = n1->i;
+	int b = n2->i;
 	switch (name->str.ptr[0])
 	{
-	case '+':
-		res = n1->i+n2->i;
-		break;
-	case '-':
-		res = n2->i-n1->i; 
-		break;
-	case '*':
-		res = (n1->i)*(n2->i);
-		break;
-	case '/':
-		res = (n1->i)/(n2->i);
-		break;
-	case '%':
-		res = (n1->i)%(n2->i);
-		break;
+	case '+': res = a+b; break;
+	case '-': res = a-b; break;
+	case '*': res = a*b; break;
+	case '/': res = a/b; break;
+	case '%': res = a%b; break;
 	default:
 		printf("ERROR: unknown operation\n");
 		exit(1);
@@ -485,30 +503,33 @@ void basicCompareFunction(fcontext *ctx, fobj *name){
 	size_t stacklen = ctx->stack->list.len;
 	assert(stacklen>=2);
 
-	fobj *n1 = ctx->stack->list.ele[stacklen-1];
-	fobj *n2 = ctx->stack->list.ele[stacklen-2];
-	listPop(ctx->stack);
-	listPop(ctx->stack);
+	lazyEval(ctx);
+	fobj *n1 = contextPop(ctx);
+
+	lazyEval(ctx);
+	fobj *n2 = contextPop(ctx);
+	
 	fobj *newO;
 	assert(n1->type==INT && n2->type==INT);
 	int res;
+	int a = n1->i;
+	int b = n2->i;
 	switch (name->str.ptr[0])
 	{
 	case '>':
-		res = (n1>n2);
+		res = (a>b);
 		break;
 	case '<':
-		res = (n1<n2);
+		res = (a<b);
 		break;
 	case '=':
-		res = (n1==n2);
+		res = (a==b);
 		break;
 	default:
 		printf("ERROR: cannot compare\n");
 		exit(1);
 		break;
 	}
-
 	newO = newBoolObject(res);
 	listPush(ctx->stack,newO);
 	retain(newO);
@@ -537,42 +558,39 @@ void basicStackFunction(fcontext *ctx, fobj *name){
 	}
 }
 
-void basicBranchFuntion(fcontext *ctx, fobj *name){
-	echoObject(ctx->stack);
-	printf("debug \n\n");
-
-	size_t stacklen = ctx->stack->list.len;
-	assert(stacklen>=2);
-
-	fobj *expr = ctx->stack->list.ele[stacklen-1];
+void basicCondFunction(fcontext *ctx, fobj *name){
+	lazyEval(ctx);
+	fobj *expr = ctxGetFromTop(ctx,0);
 	listPop(ctx->stack);
+	assert(expr->type == BOOL);
 
-	// assert(expr->type==LIST);
-	// fcontext *exprCtx = newContext();
-	// exec(exprCtx,expr);
-
-	// if(exprCtx->stack->list.len!=1 || exprCtx->stack->list.ele[0]->type!=BOOL){
-	// 	printf("error: ");
-	// 	echoObject(expr);
-	// 	printf("cannot be valued as true or false\n");
-	// 	exit(1);
-	// }
-
-	// short cond = exprCtx->stack->list.ele[0]->i;
-	// release(exprCtx->stack);
-	
 	int cond = expr->i;
+	if (strcmp(name->str.ptr,"if")==0){
+		fobj *then_branch = ctxGetFromTop(ctx,0);
+		listPop(ctx->stack);
 
-	if (strcmp(name->str.ptr,"if")==0)
-	{		
-		printf("THEN BRANCH ENTERED\n");
-		stacklen = ctx->stack->list.len;
-		assert(stacklen>=1);
-		if(cond==0){
-			listPop(ctx->stack);
+		if(cond==1){
+			exec(ctx, then_branch);
 		}
 	}
-	
+	else if(strcmp(name->str.ptr,"ifelse")==0){
+		fobj *then_branch = ctxGetFromTop(ctx,0);
+		fobj *else_branch = ctxGetFromTop(ctx,1);
+		listPop(ctx->stack);
+		listPop(ctx->stack);
+
+		assert(then_branch->type==LIST && else_branch->type==LIST);
+		if(cond==1){
+			exec(ctx,then_branch);
+		}
+		else if(cond==0){
+			exec(ctx,else_branch);
+		}
+	}
+}
+
+void basicLoopFunction(fcontext *ctx, fobj *name){
+
 }
 
 /*================================= EXEC AND CONTEST =================================*/
@@ -589,7 +607,9 @@ void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,">",basicCompareFunction);
 	registerFunction(ctx,"<",basicCompareFunction);
 	registerFunction(ctx,"=",basicCompareFunction);
-	registerFunction(ctx,"if",basicBranchFuntion);
+	registerFunction(ctx,"if",basicCondFunction);
+	registerFunction(ctx,"ifelse",basicCondFunction);
+
 }
 
 void *newContext(){
@@ -609,6 +629,13 @@ void mergeContext(fcontext* ctx, fcontext *subctxt){
 		listPush(ctx->stack, subctxt->stack->list.ele[i]);
 		retain(subctxt->stack->list.ele[i]);
 	}	
+}
+
+fobj* contextPop(fcontext* ctx){
+	assert(ctx->stack->list.len>0);
+	fobj* top = ctxGetFromTop(ctx,0);
+	listPop(ctx->stack);
+	return top;
 }
 
 /*try to match the 'word' symbol with the proper function.
@@ -639,11 +666,11 @@ void exec(fcontext *ctx, fobj *prg){
 			callSymbol(ctx,word);
 			break;
 		case LIST:
-			fcontext *subctx = newContext();
-			exec(subctx,word);
-			mergeContext(ctx,subctx);
-			release(subctx->stack);
-			break;
+		//	fcontext *subctx = newContext();
+		//	exec(ctx,word);
+		//	mergeContext(ctx,subctx);
+		//	release(subctx->stack);
+		//	break;
 		default:
 			listPush(ctx->stack, word);
 			retain(word);
