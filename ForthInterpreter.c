@@ -65,8 +65,11 @@ typedef struct fcontext{
 void listPop(fobj *l);
 void release(fobj *o);
 fobj *compile(char* prg);
+void exec(fcontext *ctx, fobj *prg);
+void *newContext();
 /*================================= ALLOCATION WRAPPERS =========================================*/
 
+/*Just a (more) safe malloc that checks for out of memory exceptions.*/
 void *smalloc(size_t size){
 	void *ptr = malloc(size);
 	if(ptr == NULL){
@@ -76,6 +79,7 @@ void *smalloc(size_t size){
 
 	return ptr;
 }
+
 
 void *srealloc(void *oldptr, size_t size){
 	void *ptr = realloc(oldptr,size);
@@ -207,6 +211,10 @@ void echoObject(fobj *o){
 	case STR:
 		printf("\"%s\"",o->str.ptr);
 		break;
+	case BOOL:
+		if(o->i) printf("true");
+		else printf("false");
+		break;
 	default:
 		printf("unknown type");
 		break;
@@ -274,7 +282,7 @@ fobj *parseNumber(fparser *parser){
 }
 
 int isSymbolChar(char c){
-	const char symchars[] = "+-*/%";
+	const char symchars[] = "+-*/%><=";
 	return (isalpha(c) || (strchr(symchars,c) && c!=0));
 }
 
@@ -433,6 +441,42 @@ void basicMathFunction(fcontext *ctx, fobj *name){
 	retain(newO);
 }
 
+/*basic function to make comparisons between two objects.
+ *TODO: implement string comparison*/
+
+void basicCompareFunction(fcontext *ctx, fobj *name){
+	size_t stacklen = ctx->stack->list.len;
+	assert(stacklen>=2);
+
+	fobj *n1 = ctx->stack->list.ele[stacklen-1];
+	fobj *n2 = ctx->stack->list.ele[stacklen-2];
+	listPop(ctx->stack);
+	listPop(ctx->stack);
+	fobj *newO;
+	assert(n1->type==INT && n2->type==INT);
+	int res;
+	switch (name->str.ptr[0])
+	{
+	case '>':
+		res = (n1>n2);
+		break;
+	case '<':
+		res = (n1<n2);
+		break;
+	case '=':
+		res = (n1==n2);
+		break;
+	default:
+		printf("ERROR: cannot compare\n");
+		exit(1);
+		break;
+	}
+
+	newO = newBoolObject(res);
+	listPush(ctx->stack,newO);
+	retain(newO);
+}
+
 void basicStackFunction(fcontext *ctx, fobj *name){
 	size_t stacklen = ctx->stack->list.len;
 	assert(stacklen>=1);
@@ -456,6 +500,44 @@ void basicStackFunction(fcontext *ctx, fobj *name){
 	}
 }
 
+void basicBranchFuntion(fcontext *ctx, fobj *name){
+	echoObject(ctx->stack);
+	printf("debug \n\n");
+
+	size_t stacklen = ctx->stack->list.len;
+	assert(stacklen>=2);
+
+	fobj *expr = ctx->stack->list.ele[stacklen-1];
+	listPop(ctx->stack);
+
+	// assert(expr->type==LIST);
+	// fcontext *exprCtx = newContext();
+	// exec(exprCtx,expr);
+
+	// if(exprCtx->stack->list.len!=1 || exprCtx->stack->list.ele[0]->type!=BOOL){
+	// 	printf("error: ");
+	// 	echoObject(expr);
+	// 	printf("cannot be valued as true or false\n");
+	// 	exit(1);
+	// }
+
+	// short cond = exprCtx->stack->list.ele[0]->i;
+	// release(exprCtx->stack);
+	
+	int cond = expr->i;
+
+	if (strcmp(name->str.ptr,"if")==0)
+	{		
+		printf("THEN BRANCH ENTERED\n");
+		stacklen = ctx->stack->list.len;
+		assert(stacklen>=1);
+		if(cond==1){
+			listPop(ctx->stack);
+		}
+	}
+	
+}
+
 /*================================= EXEC AND CONTEST =================================*/
 
 void fillFunctionTable(fcontext *ctx){
@@ -467,6 +549,10 @@ void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,"dup",basicStackFunction);
 	registerFunction(ctx,"drop",basicStackFunction);
 	registerFunction(ctx,"swap",basicStackFunction);
+	registerFunction(ctx,">",basicCompareFunction);
+	registerFunction(ctx,"<",basicCompareFunction);
+	registerFunction(ctx,"=",basicCompareFunction);
+	registerFunction(ctx,"if",basicBranchFuntion);
 }
 
 void *newContext(){
