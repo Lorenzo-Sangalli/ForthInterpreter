@@ -44,16 +44,17 @@ typedef struct fparser{
 }fparser;
 
 /*Each entry is a symbol name associated with a function implementation*/
-struct FunctionTableEntry{	
+typedef struct FunctionTableEntry{	
 	fobj *name; //(should be a symbol)
 	void (*callback) (fcontext *ctx, fobj *name);
-	fobj *user_list;
-};
+	fobj *user_func;
+} funcentry;
 
-struct FunctionTable{
-	struct FunctionTableEntry **tbl;
+typedef struct FunctionTable{
+ 	struct FunctionTableEntry **tbl;
 	size_t funCount;
-};
+} functable;
+ 
 
 /*Execution context*/
 typedef struct fcontext{
@@ -67,6 +68,7 @@ void release(fobj *o);
 fobj *compile(char* prg);
 void exec(fcontext *ctx, fobj *prg);
 void *newContext();
+void retain(fobj *o);
 /*================================= ALLOCATION WRAPPERS =========================================*/
 
 /*Just a (more) safe malloc that checks for out of memory exceptions.*/
@@ -138,20 +140,55 @@ fobj *newListObject(void){
 	return o;
 }
 
+/* Push a new function in the context, it's up to the caller to set the callback*/
 
-/*Register the 'callback' function in the 'functions' FunctionTable found in ctx.*/
-void registerFunction(fcontext *ctx, char* symbol, 	void (*callback) (fcontext *ctx, fobj *name)){
+funcentry *newFunction(fcontext *ctx, fobj *name){
 	size_t tbl_len = ctx->functions.funCount;
 
 	ctx->functions.tbl = srealloc(ctx->functions.tbl, (tbl_len+1)*sizeof(ctx->functions.tbl[0]));
 	
-	ctx->functions.tbl[tbl_len] = smalloc(sizeof(struct FunctionTableEntry));
-	ctx->functions.tbl[tbl_len]->callback = callback;
+	ctx->functions.tbl[tbl_len] = smalloc(sizeof(funcentry));
 	
-	fobj *symobj = newSymbolObject(symbol,strlen(symbol));
-	ctx->functions.tbl[tbl_len]->name = symobj;
-
+	ctx->functions.tbl[tbl_len]->name = name;
+	retain(name);
 	ctx->functions.funCount++;
+	ctx->functions.tbl[tbl_len]->callback = NULL;
+	ctx->functions.tbl[tbl_len]->user_func = NULL;
+
+	return ctx->functions.tbl[tbl_len];
+}
+
+funcentry *getFunction(fcontext *ctx, fobj *word){
+	size_t nfun = ctx->functions.funCount;
+
+	for (size_t i = 0; i < nfun; i++)
+	{
+		if (strcmp(ctx->functions.tbl[i]->name->str.ptr ,word->str.ptr)==0)
+		{
+			return 	ctx->functions.tbl[i];
+		}
+	}
+
+	return NULL;
+}
+
+/*Register the 'callback' function in the 'functions' FunctionTable found in ctx.*/
+void registerFunction(fcontext *ctx, char* symbol, 	void (*callback) (fcontext *ctx, fobj *name)){
+
+	fobj *oname = newSymbolObject(symbol, strlen(symbol));
+	funcentry *fe = getFunction(ctx,oname);
+	if(fe!=NULL && fe->user_func!=NULL){
+		release(fe->user_func);
+		fe->user_func = NULL;
+		fe->callback = callback;
+	}
+	else{
+		fe = newFunction(ctx,oname);
+		fe->callback = callback;
+	}
+	
+	release(oname);
+
 }
 void retain(fobj *o){
 	o->refcount++;
@@ -531,7 +568,7 @@ void basicBranchFuntion(fcontext *ctx, fobj *name){
 		printf("THEN BRANCH ENTERED\n");
 		stacklen = ctx->stack->list.len;
 		assert(stacklen>=1);
-		if(cond==1){
+		if(cond==0){
 			listPop(ctx->stack);
 		}
 	}
@@ -579,21 +616,15 @@ void mergeContext(fcontext* ctx, fcontext *subctxt){
 int callSymbol(fcontext *ctx, fobj *word){
 //	printf("CALL SYMBOL BEGIN\n");
 	size_t nfun = ctx->functions.funCount;
-	int found = 0;
+	
 //	printf("word: %s\n",word->str.ptr);
 
-	for (size_t i = 0; i < nfun; i++)
-	{
-//		printf("fun: %s\n",ctx->functions.tbl[i]->name->str.ptr);
-		if (strcmp(ctx->functions.tbl[i]->name->str.ptr ,word->str.ptr)==0)
-		{
-			found = 1;
-			ctx->functions.tbl[i]->callback(ctx,word);
-			break;
-		}
-	}
+	funcentry *fe = getFunction(ctx,word);
 
-	return found;
+	if(fe==NULL) return 1;
+
+	fe->callback(ctx,word);
+	return 0;
 }
 /*Execute the program stored in the prg list*/
 void exec(fcontext *ctx, fobj *prg){
