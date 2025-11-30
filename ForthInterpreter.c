@@ -279,18 +279,12 @@ void listPush(fobj *l, fobj * ele){
 	l->list.ele = srealloc(l->list.ele, sizeof(fobj*)*(list_size+1));
 	l->list.ele[list_size]=ele;
 	l->list.len++;
-//	echoObject(l);
-//	printf("\n SUCCESS \n");
-	
 }
 
 void listPop(fobj *l){
-//	printf("RELEASE: ");
-//	echoObject(l);
 	size_t len = l->list.len;
 	release(l->list.ele[len-1]);
 	l->list.len--;
-//	printf("\nSUCCESS\n");
 }
 
 /*================================= MAKE PROGRAM INTO A LIST =================================*/
@@ -407,15 +401,9 @@ fobj *compile(char* prg){
 		}
 		else if(isSymbolChar(parser.p[0])){
 			o = parseSymbol(&parser);
-//			printf("SYMBOL PARSING TERMINATED\n");
-//			echoObject(o);
-//			printf("\n continue to: %s", parser.p);
 		}
 		else if(parser.p[0]=='['){
 			o = parseList(&parser);
-//			printf("LIST PARSING TERMINATED\n");
-			// echoObject(o);
-			// printf("\n continue to: %s", parser.p);
 		}
 		else{
 			o = NULL;
@@ -431,8 +419,6 @@ fobj *compile(char* prg){
 			retain(o);
 		}
 	}
-//	printf("\nCOMPILE TERMIANATED\n");
-//	echoObject(parsed);
 	return parsed;
 }
 
@@ -507,8 +493,8 @@ void basicCompareFunction(fcontext *ctx, fobj *name){
 	fobj *n1 = contextPop(ctx);
 
 	lazyEval(ctx);
-	fobj *n2 = contextPop(ctx);
-	
+	fobj *n2 = ctxGetFromTop(ctx,0);
+
 	fobj *newO;
 	assert(n1->type==INT && n2->type==INT);
 	int res;
@@ -590,7 +576,21 @@ void basicCondFunction(fcontext *ctx, fobj *name){
 }
 
 void basicLoopFunction(fcontext *ctx, fobj *name){
+	fobj *expr = contextPop(ctx);
+	fobj *body = contextPop(ctx);
+	assert(expr->type==LIST && body->type==LIST);
 
+	exec(ctx,expr);
+	fobj *cond = contextPop(ctx);
+	assert(cond->type==BOOL);
+
+	while (cond->i)
+	{
+		exec(ctx,body);
+		exec(ctx,expr);
+		cond = contextPop(ctx);
+	}
+	
 }
 
 /*================================= EXEC AND CONTEST =================================*/
@@ -609,7 +609,7 @@ void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,"=",basicCompareFunction);
 	registerFunction(ctx,"if",basicCondFunction);
 	registerFunction(ctx,"ifelse",basicCondFunction);
-
+	registerFunction(ctx,"while",basicLoopFunction);
 }
 
 void *newContext(){
