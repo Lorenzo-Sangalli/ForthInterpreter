@@ -100,7 +100,7 @@ void *srealloc(void *oldptr, size_t size){
 	return ptr;
 }
 
-/*================================= OBJECT RELATED FUNCTIONS =================================*/
+/*================================= OBJECT CONSTRUCTORS =================================*/
 
 /*Allocate and initizialize a new object of the desired ftype*/
 
@@ -147,6 +147,8 @@ fobj *newListObject(void){
 
 	return o;
 }
+
+/*================================= FUNCTIONS HANDLING =================================*/
 
 /* Push a new function in the context, it's up to the caller to set the callback*/
 
@@ -198,9 +200,29 @@ void registerFunction(fcontext *ctx, char* symbol, 	void (*callback) (fcontext *
 	release(oname);
 
 }
+
+void registerUserFunction(fcontext *ctx, fobj *oname, fobj *expr){
+	assert(expr->type == LIST && oname->type == SYMBOL);
+
+	funcentry *fe = getFunction(ctx, oname);
+
+	if (fe!=NULL && fe->callback!=NULL){
+		fe->callback = NULL;
+		fe->user_func = expr;
+	}
+	else{
+		fe = newFunction(ctx,oname);
+		fe->user_func = expr;
+	}
+
+	release(oname);
+	
+}
+
+/*================================= OBJECT RELATED FUNCTIONS =================================*/
+
 void retain(fobj *o){
 	o->refcount++;
-
 }	
 
 /*Free an object even if it has a complex or nested type e.g: list or str*/
@@ -272,9 +294,6 @@ void echoObject(fobj *o){
  *It is up to the caller to increment the reference count
  *of the added element if needed. */
 void listPush(fobj *l, fobj * ele){
-//	printf("LIST PUSH: ");
-//	echoObject(ele);
-//	printf("\n");
 	size_t list_size= l->list.len;
 	l->list.ele = srealloc(l->list.ele, sizeof(fobj*)*(list_size+1));
 	l->list.ele[list_size]=ele;
@@ -321,7 +340,7 @@ fobj *parseNumber(fparser *parser){
 }
 
 int isSymbolChar(char c){
-	const char symchars[] = "+-*/%><=";
+	const char symchars[] = "+-*/%><=:";
 	return (isalpha(c) || (strchr(symchars,c) && c!=0));
 }
 
@@ -493,7 +512,7 @@ void basicCompareFunction(fcontext *ctx, fobj *name){
 	fobj *n1 = contextPop(ctx);
 
 	lazyEval(ctx);
-	fobj *n2 = ctxGetFromTop(ctx,0);
+	fobj *n2 = contextPop(ctx);
 
 	fobj *newO;
 	assert(n1->type==INT && n2->type==INT);
@@ -545,6 +564,7 @@ void basicStackFunction(fcontext *ctx, fobj *name){
 }
 
 void basicCondFunction(fcontext *ctx, fobj *name){
+	echoObject(ctx->stack);printf("\n");
 	lazyEval(ctx);
 	fobj *expr = ctxGetFromTop(ctx,0);
 	listPop(ctx->stack);
@@ -576,21 +596,34 @@ void basicCondFunction(fcontext *ctx, fobj *name){
 }
 
 void basicLoopFunction(fcontext *ctx, fobj *name){
-	fobj *expr = contextPop(ctx);
-	fobj *body = contextPop(ctx);
-	assert(expr->type==LIST && body->type==LIST);
 
-	exec(ctx,expr);
-	fobj *cond = contextPop(ctx);
-	assert(cond->type==BOOL);
+	if(strcmp(name->str.ptr,"while")==0){
+		fobj *expr = contextPop(ctx);
+		fobj *body = contextPop(ctx);
+		assert(expr->type==LIST && body->type==LIST);
 
-	while (cond->i)
-	{
-		exec(ctx,body);
 		exec(ctx,expr);
-		cond = contextPop(ctx);
+		fobj *cond = contextPop(ctx);
+		assert(cond->type==BOOL);
+
+		while (cond->i)
+		{
+			exec(ctx,body);
+			exec(ctx,expr);
+			cond = contextPop(ctx);
+		}
 	}
-	
+}
+
+void declareFunction(fcontext *ctx, fobj *name){
+	if(strcmp(name->str.ptr,"DEFINE")==0){
+		fobj *body = contextPop(ctx);
+		fobj *symbol = contextPop(ctx);
+
+		assert(symbol->type == SYMBOL && body->type == LIST);
+
+		registerUserFunction(ctx,symbol,body);
+	}
 }
 
 /*================================= EXEC AND CONTEST =================================*/
@@ -610,6 +643,7 @@ void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,"if",basicCondFunction);
 	registerFunction(ctx,"ifelse",basicCondFunction);
 	registerFunction(ctx,"while",basicLoopFunction);
+	registerFunction(ctx,"DEFINE",declareFunction);
 }
 
 void *newContext(){
@@ -641,16 +675,25 @@ fobj* contextPop(fcontext* ctx){
 /*try to match the 'word' symbol with the proper function.
  *return 0 if a proper function was found, return 1 otherwise*/
 int callSymbol(fcontext *ctx, fobj *word){
-//	printf("CALL SYMBOL BEGIN\n");
 	size_t nfun = ctx->functions.funCount;
 	
-//	printf("word: %s\n",word->str.ptr);
-
 	funcentry *fe = getFunction(ctx,word);
 
-	if(fe==NULL) return 1;
+	if(fe==NULL){
+		int len = word->str.len;
+		if(word->str.ptr[len-1]==':'){
+			word->str.ptr[len-1]=0;
+			listPush(ctx->stack,word);
+			return 0;
+		}
+		else{
+			return 1;
+		}
+	}
 
-	fe->callback(ctx,word);
+	if(fe->callback!=NULL)fe->callback(ctx,word);
+	else exec(ctx, fe->user_func);
+
 	return 0;
 }
 /*Execute the program stored in the prg list*/
@@ -676,6 +719,7 @@ void exec(fcontext *ctx, fobj *prg){
 			retain(word);
 			break;
 		}
+
 	}
 	
 }
