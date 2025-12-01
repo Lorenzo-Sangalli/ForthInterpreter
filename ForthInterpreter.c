@@ -28,7 +28,7 @@ typedef struct fobj{
 		struct{
 			char *ptr;
 			size_t len;
-			int quoted:1; //true or false;
+			int quoted:1; //true if it's a proper string or false if it's a symbol.
 		}str;
 		struct list {
 			struct fobj **ele;
@@ -148,7 +148,7 @@ fobj *newListObject(void){
 	return o;
 }
 
-/*================================= FUNCTIONS HANDLING =================================*/
+/*================================= FORTH FUNCTIONS HANDLING =================================*/
 
 /* Push a new function in the context, it's up to the caller to set the callback*/
 
@@ -306,7 +306,7 @@ void listPop(fobj *l){
 	l->list.len--;
 }
 
-/*================================= MAKE PROGRAM INTO A LIST =================================*/
+/*================================= PARSING FUNCTIONS =================================*/
 void parseSpaces(fparser *parser){
 	while (parser->p && isspace(parser->p[0]))
 	{
@@ -340,7 +340,7 @@ fobj *parseNumber(fparser *parser){
 }
 
 int isSymbolChar(char c){
-	const char symchars[] = "+-*/%><=:";
+	const char symchars[] = "+-*/%><=:;";
 	return (isalpha(c) || (strchr(symchars,c) && c!=0));
 }
 
@@ -616,7 +616,7 @@ void basicLoopFunction(fcontext *ctx, fobj *name){
 }
 
 void declareFunction(fcontext *ctx, fobj *name){
-	if(strcmp(name->str.ptr,"DEFINE")==0){
+	if(strcmp(name->str.ptr,";")==0){
 		fobj *body = contextPop(ctx);
 		fobj *symbol = contextPop(ctx);
 
@@ -643,7 +643,7 @@ void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,"if",basicCondFunction);
 	registerFunction(ctx,"ifelse",basicCondFunction);
 	registerFunction(ctx,"while",basicLoopFunction);
-	registerFunction(ctx,"DEFINE",declareFunction);
+	registerFunction(ctx,";",declareFunction);
 }
 
 void *newContext(){
@@ -706,22 +706,14 @@ void exec(fcontext *ctx, fobj *prg){
 		switch (word->type)
 		{
 		case SYMBOL:
-			callSymbol(ctx,word);
+			if(callSymbol(ctx,word))printf("error: cannot resolve %s symbol\n", word->str.ptr);
 			break;
-		case LIST:
-		//	fcontext *subctx = newContext();
-		//	exec(ctx,word);
-		//	mergeContext(ctx,subctx);
-		//	release(subctx->stack);
-		//	break;
 		default:
 			listPush(ctx->stack, word);
 			retain(word);
 			break;
 		}
-
 	}
-	
 }
 
 /*================================= MAIN =================================*/
