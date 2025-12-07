@@ -234,6 +234,7 @@ void freeObject(fobj *o){
 			fobj* ele = o->list.ele[i];
 			release(ele);
 		}
+		free(o->list.ele);
 		break;
 	case SYMBOL:
 	case STR:
@@ -446,7 +447,7 @@ void lazyEval(fcontext *ctx){
 	fobj *o = ctxGetFromTop(ctx,0);
 	while (o->type==LIST)
 	{	
-		listPop(ctx->stack);
+		contextPop(ctx);
 		exec(ctx,o);
 		o=ctxGetFromTop(ctx,0);
 	}	
@@ -465,12 +466,10 @@ void basicMathFunction(fcontext *ctx, fobj *name){
 
 	
 	lazyEval(ctx);
-	fobj *n1 = ctxGetFromTop(ctx,0);
-	listPop(ctx->stack);
+	fobj *n1 = contextPop(ctx);
 	
 	lazyEval(ctx);
-	fobj *n2 = ctxGetFromTop(ctx,0);
-	listPop(ctx->stack);
+	fobj *n2 = contextPop(ctx);
 	
 	
 	fobj *newO;
@@ -549,13 +548,13 @@ void basicStackFunction(fcontext *ctx, fobj *name){
 		retain(top);
 	}
 	else if(strcmp(name->str.ptr,"drop")==0){
-		listPop(ctx->stack);
+		contextPop(ctx);
 	}
 	else if(strcmp(name->str.ptr,"swap")==0){
 		assert(stacklen>=2);
 		fobj *sec = ctx->stack->list.ele[stacklen-2];
-		listPop(ctx->stack);
-		listPop(ctx->stack);
+		contextPop(ctx);
+		contextPop(ctx);
 		listPush(ctx->stack, top);
 		listPush(ctx->stack, sec);
 		retain(top);
@@ -567,23 +566,27 @@ void basicCondFunction(fcontext *ctx, fobj *name){
 	echoObject(ctx->stack);printf("\n");
 	lazyEval(ctx);
 	fobj *expr = ctxGetFromTop(ctx,0);
-	listPop(ctx->stack);
+	contextPop(ctx);
 	assert(expr->type == BOOL);
 
 	int cond = expr->i;
+	release(expr);
+	
 	if (strcmp(name->str.ptr,"if")==0){
 		fobj *then_branch = ctxGetFromTop(ctx,0);
-		listPop(ctx->stack);
+		contextPop(ctx);
 
 		if(cond==1){
 			exec(ctx, then_branch);
 		}
+
+		release(then_branch);
 	}
 	else if(strcmp(name->str.ptr,"ifelse")==0){
 		fobj *then_branch = ctxGetFromTop(ctx,0);
 		fobj *else_branch = ctxGetFromTop(ctx,1);
-		listPop(ctx->stack);
-		listPop(ctx->stack);
+		contextPop(ctx);
+		contextPop(ctx);
 
 		assert(then_branch->type==LIST && else_branch->type==LIST);
 		if(cond==1){
@@ -592,10 +595,14 @@ void basicCondFunction(fcontext *ctx, fobj *name){
 		else if(cond==0){
 			exec(ctx,else_branch);
 		}
+
+		release(then_branch);
+		release(else_branch);
 	}
 }
 
 void basicLoopFunction(fcontext *ctx, fobj *name){
+
 
 	if(strcmp(name->str.ptr,"while")==0){
 		fobj *expr = contextPop(ctx);
@@ -605,7 +612,7 @@ void basicLoopFunction(fcontext *ctx, fobj *name){
 		exec(ctx,expr);
 		fobj *cond = contextPop(ctx);
 		assert(cond->type==BOOL);
-
+		
 		while (cond->i)
 		{
 			exec(ctx,body);
@@ -668,6 +675,7 @@ void mergeContext(fcontext* ctx, fcontext *subctxt){
 fobj* contextPop(fcontext* ctx){
 	assert(ctx->stack->list.len>0);
 	fobj* top = ctxGetFromTop(ctx,0);
+	retain(top);
 	listPop(ctx->stack);
 	return top;
 }
@@ -698,7 +706,7 @@ int callSymbol(fcontext *ctx, fobj *word){
 }
 /*Execute the program stored in the prg list*/
 void exec(fcontext *ctx, fobj *prg){
-//	printf("EXEC BEGIN\n");
+	
 	assert(prg->type==LIST);
 	for (size_t i = 0; i < prg->list.len; i++)
 	{
@@ -706,7 +714,7 @@ void exec(fcontext *ctx, fobj *prg){
 		switch (word->type)
 		{
 		case SYMBOL:
-			if(callSymbol(ctx,word))printf("error: cannot resolve %s symbol\n", word->str.ptr);
+			if(callSymbol(ctx,word)) printf("error: cannot resolve %s symbol\n", word->str.ptr);
 			break;
 		default:
 			listPush(ctx->stack, word);
