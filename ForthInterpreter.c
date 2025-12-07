@@ -303,6 +303,7 @@ void listPush(fobj *l, fobj * ele){
 
 void listPop(fobj *l){
 	size_t len = l->list.len;
+	assert(len>0);
 	release(l->list.ele[len-1]);
 	l->list.len--;
 }
@@ -335,6 +336,7 @@ fobj *parseNumber(fparser *parser){
 
 	buffer[i]=0;
 	int n = atoi(buffer);
+	
 	n*=isNegative;
 	fobj *o = newIntObject(n);
 	return o;
@@ -436,7 +438,7 @@ fobj *compile(char* prg){
 		}
 		else {
 			listPush(parsed,o);
-			retain(o);
+			//retain(o);
 		}
 	}
 	return parsed;
@@ -497,7 +499,6 @@ void basicMathFunction(fcontext *ctx, fobj *name){
 
 	newO = newIntObject(res);
 	listPush(ctx->stack,newO);
-	retain(newO);
 }
 
 /*basic function to make comparisons between two objects.
@@ -536,7 +537,7 @@ void basicCompareFunction(fcontext *ctx, fobj *name){
 	}
 	newO = newBoolObject(res);
 	listPush(ctx->stack,newO);
-	retain(newO);
+
 }
 
 void basicStackFunction(fcontext *ctx, fobj *name){
@@ -617,9 +618,15 @@ void basicLoopFunction(fcontext *ctx, fobj *name){
 		{
 			exec(ctx,body);
 			exec(ctx,expr);
+			release(cond);
 			cond = contextPop(ctx);
 		}
+
+		release(cond);
+		release(expr);
+		release(body);
 	}
+	
 }
 
 void declareFunction(fcontext *ctx, fobj *name){
@@ -633,7 +640,7 @@ void declareFunction(fcontext *ctx, fobj *name){
 	}
 }
 
-/*================================= EXEC AND CONTEST =================================*/
+/*================================= EXEC AND CONTEXT =================================*/
 
 void fillFunctionTable(fcontext *ctx){
 	registerFunction(ctx,"+",basicMathFunction);
@@ -664,6 +671,21 @@ void *newContext(){
 	return ctx; 
 }
 
+void freeContext(fcontext*ctx){
+	release(ctx->stack);
+	for(int i = 0; i<ctx->functions.funCount; i++){
+		funcentry *fe = ctx->functions.tbl[i];
+
+		release(fe->name);
+		if (fe->user_func!=NULL) release(fe->user_func);
+
+		free(fe);
+	}
+
+	free(ctx->functions.tbl);
+	free(ctx);
+}
+
 void mergeContext(fcontext* ctx, fcontext *subctxt){
 	for (size_t i = 0; i < subctxt->stack->list.len; i++)
 	{
@@ -692,6 +714,7 @@ int callSymbol(fcontext *ctx, fobj *word){
 		if(word->str.ptr[len-1]==':'){
 			word->str.ptr[len-1]=0;
 			listPush(ctx->stack,word);
+			retain(word);
 			return 0;
 		}
 		else{
@@ -750,11 +773,6 @@ int main(int argc, char **argv){
 
 	
 	fobj *prg = compile(prgtext);
-	// if(prg!=NULL){
-	// 	printf("\nPROGRAM COMPILATION SUCCESSFUL:\n");
-	// 	echoObject(prg);
-	// 	printf("\n");
-	// }
 
 	fcontext *ctx = newContext();
 	exec(ctx, prg);
@@ -762,5 +780,10 @@ int main(int argc, char **argv){
 	printf("Stack: ");
 	echoObject(ctx->stack);
 	printf("\n");
+
+	freeContext(ctx);
+	release(prg);
+	free(prgtext);
+
 	return 0;
 }
