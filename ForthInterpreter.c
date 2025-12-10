@@ -242,7 +242,6 @@ varentry *newVariable(fcontext *ctx, char *name){
 	ctx->variables.tbl[tbl_len] = smalloc(sizeof(funcentry));
 	ctx->variables.tbl[tbl_len]->name = smalloc(strlen(name)+1);
 	strcpy(ctx->variables.tbl[tbl_len]->name, name);
-	free(name);
 	ctx->variables.varCount++;
 
 	return ctx->variables.tbl[tbl_len];
@@ -829,13 +828,13 @@ int callSymbol(fcontext *ctx, fobj *word){
 			return 0;
 		}
 		else if(word->str.ptr[0] == '$'){
-			word->str.ptr++;
-			varentry *ve = getVariable(ctx,word->str.ptr);
+			
+			varentry *ve = getVariable(ctx,word->str.ptr+1);
 			if (ve==NULL){
 				return 1;
 			}
 			listPush(ctx->stack,ve->val);
-			retain(word);
+			retain(ve->val);
 			return 0;
 		}
 	}
