@@ -16,8 +16,9 @@ typedef enum F_TYPE{
 	STR = 1,
 	BOOL = 2,
 	LIST = 3,
-	SYMBOL = 4
-	//FLOAT = 5;
+	SYMBOL = 4,
+	VAR_SET = 5
+	//FLOAT = 6;
 } ftype;
 
 typedef struct fobj{
@@ -43,6 +44,8 @@ typedef struct fparser{
 	char *p; //next token to parse.
 }fparser;
 
+/*============================ FUNCTION TABLE DATA STRUCTURE ============================*/
+
 /*Each entry is a symbol name associated with a function implementation*/
 typedef struct FunctionTableEntry{	
 	fobj *name; //(should be a symbol)
@@ -51,25 +54,39 @@ typedef struct FunctionTableEntry{
 } funcentry;
 
 typedef struct FunctionTable{
- 	struct FunctionTableEntry **tbl;
+ 	funcentry **tbl;
 	size_t funCount;
 } functable;
  
+/*============================== VAR TABLE DATA STRUCTURE ===============================*/
+
+typedef struct VarTableEntry{
+	char *name;
+	fobj *val;
+} varentry;
+
+typedef struct VarTable{
+	varentry **tbl;
+	size_t varCount;
+} vartable;
+
+
+/*============================== CONTESXT DATA STRUCTURE ==============================*/
 
 /*Execution context*/
 typedef struct fcontext{
 	fobj *stack;
-	struct FunctionTable functions;
+	functable functions;
+	vartable variables;
 }fcontext;
 
 fobj *ctxGetFromTop(fcontext *ctx, int index){
 	size_t stacklen = ctx->stack->list.len;
 	assert(stacklen-1-index>=0);
 	return ctx->stack->list.ele[stacklen-1-index];
-
 }
 
-/*================================= FORWARD DECLARATIONS ========================================*/
+/*================================= FORWARD DECLARATIONS ====================================*/
 void listPop(fobj *l);
 void release(fobj *o);
 fobj *compile(char* prg);
@@ -77,7 +94,7 @@ void exec(fcontext *ctx, fobj *prg);
 void *newContext();
 void retain(fobj *o);
 fobj * contextPop(fcontext *ctx);
-/*================================= ALLOCATION WRAPPERS =========================================*/
+/*================================= ALLOCATION WRAPPERS ====================================*/
 
 /*Just a (more) safe malloc that checks for out of memory exceptions.*/
 void *smalloc(size_t size){
@@ -154,7 +171,6 @@ fobj *newListObject(void){
 
 funcentry *newFunction(fcontext *ctx, fobj *name){
 	size_t tbl_len = ctx->functions.funCount;
-
 	ctx->functions.tbl = srealloc(ctx->functions.tbl, (tbl_len+1)*sizeof(ctx->functions.tbl[0]));
 	
 	ctx->functions.tbl[tbl_len] = smalloc(sizeof(funcentry));
@@ -171,10 +187,8 @@ funcentry *newFunction(fcontext *ctx, fobj *name){
 funcentry *getFunction(fcontext *ctx, fobj *word){
 	size_t nfun = ctx->functions.funCount;
 
-	for (size_t i = 0; i < nfun; i++)
-	{
-		if (strcmp(ctx->functions.tbl[i]->name->str.ptr ,word->str.ptr)==0)
-		{
+	for (size_t i = 0; i < nfun; i++){
+		if (strcmp(ctx->functions.tbl[i]->name->str.ptr ,word->str.ptr)==0){
 			return 	ctx->functions.tbl[i];
 		}
 	}
@@ -216,6 +230,62 @@ void registerUserFunction(fcontext *ctx, fobj *oname, fobj *expr){
 	}
 
 	release(oname);
+	
+}
+/*================================ VARIABLE HANDLING FUNCTIONS ================================*/
+
+varentry *newVariable(fcontext *ctx, char *name){
+	size_t tbl_len = ctx->variables.varCount;
+
+	ctx->variables.tbl = srealloc(ctx->variables.tbl, (tbl_len+1)*sizeof(ctx->variables.tbl[0]));
+	
+	ctx->variables.tbl[tbl_len] = smalloc(sizeof(funcentry));
+	ctx->variables.tbl[tbl_len]->name = smalloc(strlen(name)+1);
+	strcpy(ctx->variables.tbl[tbl_len]->name, name);
+	free(name);
+	ctx->variables.varCount++;
+
+	return ctx->variables.tbl[tbl_len];
+}
+
+varentry *getVariable(fcontext *ctx, char* name){
+	size_t nvar = ctx->variables.varCount;
+	for (size_t i = 0; i < nvar; i++){
+		if (strcmp(ctx->variables.tbl[i]->name,name)==0){
+			return ctx->variables.tbl[i];
+		}
+	}
+
+	return NULL;
+	
+}
+
+void registerVariable(fcontext *ctx, char *name, fobj*val){
+
+	retain(val);
+	varentry *ve = getVariable(ctx,name);
+
+	if (ve!=NULL){
+		release(ve->val);
+	}
+	else{
+		ve = newVariable(ctx,name);
+	}
+
+	ve->val = val;
+}
+
+void registerVarSet(fcontext *ctx, fobj* varset){
+	assert(varset->type==VAR_SET);
+
+	size_t len = varset->list.len;
+	for (size_t i = 0; i < len; i++)
+	{
+		assert(varset->list.ele[i]->type==SYMBOL);
+		fobj *top = contextPop(ctx);
+		registerVariable(ctx, varset->list.ele[i]->str.ptr, top);
+		release(top);
+	}
 	
 }
 
@@ -283,6 +353,17 @@ void echoObject(fobj *o){
 		if(o->i) printf("true");
 		else printf("false");
 		break;
+	case VAR_SET:
+		printf("(");
+		for(size_t i = 0; i<o->list.len; i++){
+			fobj* ele = o->list.ele[i];
+			echoObject(ele);
+			if(i!=o->list.len-1){
+				printf(" ");
+			}
+		}
+		printf(")");
+		break;
 	default:
 		printf("unknown type");
 		break;
@@ -343,7 +424,7 @@ fobj *parseNumber(fparser *parser){
 }
 
 int isSymbolChar(char c){
-	const char symchars[] = "+-*/%><=:;";
+	const char symchars[] = "+-*/%><=:;$";
 	return (isalpha(c) || (strchr(symchars,c) && c!=0));
 }
 
@@ -392,10 +473,33 @@ fobj *parseList(fparser *parser){
 	char *subprg = smalloc(prglen);
 	memcpy(subprg,start,prglen);
 	subprg[prglen-1] = 0;
+
 	fobj* list = compile(subprg);
 	free(subprg);
+
 	parser->p++;
 	return list;
+}
+
+fobj *parseVarSet(fparser *parser){
+	parser->p++;
+	fobj *varSet = newListObject();
+	varSet->type = VAR_SET;
+	while (parser->p[0] != ')')
+	{
+		parseSpaces(parser);
+
+		if (!isalnum(parser->p[0])){
+			fprintf(stderr,"ERROR: non alphanumeric characters not allowed in variable names\n");
+			release(varSet);
+			return NULL;
+		}
+		
+		fobj *name = parseSymbol(parser);
+		listPush(varSet,name);
+	}
+	parser->p++;
+	return varSet;
 }
 
 fobj *compile(char* prg){
@@ -426,6 +530,9 @@ fobj *compile(char* prg){
 		}
 		else if(parser.p[0]=='['){
 			o = parseList(&parser);
+		}
+		else if(parser.p[0]=='('){
+			o = parseVarSet(&parser);
 		}
 		else{
 			o = NULL;
@@ -663,8 +770,12 @@ void fillFunctionTable(fcontext *ctx){
 void *newContext(){
 	fcontext *ctx = smalloc(sizeof(fcontext));
 	ctx->stack = newListObject();
+	
 	ctx->functions.tbl = NULL;
 	ctx->functions.funCount = 0;	
+
+	ctx->variables.tbl = NULL;
+	ctx->variables.varCount = 0;
 
 	fillFunctionTable(ctx);
 
@@ -717,8 +828,15 @@ int callSymbol(fcontext *ctx, fobj *word){
 			retain(word);
 			return 0;
 		}
-		else{
-			return 1;
+		else if(word->str.ptr[0] == '$'){
+			word->str.ptr++;
+			varentry *ve = getVariable(ctx,word->str.ptr);
+			if (ve==NULL){
+				return 1;
+			}
+			listPush(ctx->stack,ve->val);
+			retain(word);
+			return 0;
 		}
 	}
 
@@ -738,6 +856,9 @@ void exec(fcontext *ctx, fobj *prg){
 		{
 		case SYMBOL:
 			if(callSymbol(ctx,word)) printf("error: cannot resolve %s symbol\n", word->str.ptr);
+			break;
+		case VAR_SET:
+			registerVarSet(ctx,word);
 			break;
 		default:
 			listPush(ctx->stack, word);
